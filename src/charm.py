@@ -6,7 +6,6 @@
 """Charmed traefik operator."""
 
 import contextlib
-import cProfile
 import enum
 import functools
 import itertools
@@ -14,7 +13,7 @@ import json
 import logging
 import re
 import socket
-from typing import Any, Callable, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Optional, Union, cast
 from urllib.parse import urlparse
 
 import pydantic
@@ -162,25 +161,6 @@ class ExternalHostNotReadyError(Exception):
 class CertificatesUnavailableError(Exception):
     """Raised when certificates are not available."""
 
-
-def profiling_hook(method: Callable) -> Callable:
-    """Decorator that profiles a hook handler with cProfile and dumps a pstats file to /tmp/."""
-
-    @functools.wraps(method)
-    def wrapper(self: Any, event: Any, *args: Any, **kwargs: Any) -> Any:
-        hook_name = type(event).__name__
-        unit = self.unit.name.replace("/", "-")
-        filename = f"/tmp/profile_{unit}_{hook_name}.pstats"
-        profiler = cProfile.Profile()
-        profiler.enable()
-        try:
-            return method(self, event, *args, **kwargs)
-        finally:
-            profiler.disable()
-            profiler.dump_stats(filename)
-            logger.info("Profile for %s saved to %s", hook_name, filename)
-
-    return wrapper
 
 
 @trace_charm(
@@ -626,7 +606,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
             return False
         return True
 
-    @profiling_hook
     def _on_forward_auth_config_changed(self, _: AuthConfigChangedEvent) -> None:
         if self._is_forward_auth_enabled:
             if self.forward_auth.is_ready():
@@ -639,11 +618,9 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
                 )
             )
 
-    @profiling_hook
     def _on_forward_auth_config_removed(self, _: AuthConfigRemovedEvent) -> None:
         self._process_status_and_configurations()
 
-    @profiling_hook
     def _on_recv_ca_cert_available(self, event: CertificateTransferAvailableEvent) -> None:
         # Assuming only one cert per relation (this is in line with the original lib design).
         if not self.container.can_connect():
@@ -678,7 +655,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
 
         self.traefik.add_cas(cas)
 
-    @profiling_hook
     def _on_recv_ca_cert_removed(self, event: CertificateTransferRemovedEvent) -> None:
         # Assuming only one cert per relation (this is in line with the original lib design).
         self.traefik.remove_ca(str(event.relation_id))
@@ -698,11 +674,9 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
             return True
         return False
 
-    @profiling_hook
     def _on_workload_tracing_endpoint_removed(self, _: EventBase) -> None:
         self._update_config_if_changed()
 
-    @profiling_hook
     def _on_workload_tracing_endpoint_changed(self, _: EventBase) -> None:
         self._update_config_if_changed()
 
@@ -737,7 +711,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
         else:
             logger.debug("Certificate hostnames unchanged (%d); skipping cert refresh.", len(old_keys))
 
-    @profiling_hook
     def _on_peer_relation_changed(self, _: EventBase) -> None:
         """Handle peer relation changed.
 
@@ -746,7 +719,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
         if not self.unit.is_leader():
             self._configure()
 
-    @profiling_hook
     def _on_cert_changed(self, _: EventBase) -> None:
         # On slow machines, this event may come up before pebble is ready
         self._configure()
@@ -961,7 +933,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
             }
         return certs
 
-    @profiling_hook
     def _on_show_proxied_endpoints(self, event: ActionEvent) -> None:
         event.set_results(
             {
@@ -971,7 +942,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
             }
         )
 
-    @profiling_hook
     def _on_show_external_endpoints(self, event: ActionEvent) -> None:
         event.set_results(
             {
@@ -1096,7 +1066,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
         """Return UDP entryPoints sent via traefik_route."""
         return self._traefik_route_entrypoints(protocol="udp")
 
-    @profiling_hook
     def _on_traefik_pebble_ready(self, _: PebbleReadyEvent) -> None:
         if not self.container.can_connect():
             return
@@ -1124,22 +1093,18 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
         # now we restart traefik
         self._restart_traefik()
 
-    @profiling_hook
     def _on_start(self, _: StartEvent) -> None:
         self._process_status_and_configurations()
 
-    @profiling_hook
     def _on_stop(self, _: EventBase) -> None:
         # If obtaining the workload version after an upgrade fails, we do not want juju to display
         # the workload version from before the upgrade.
         self.unit.set_workload_version("")
 
-    @profiling_hook
     def _on_remove(self, _: EventBase) -> None:
         klm = self._get_lb_resource_manager()
         klm.delete()
 
-    @profiling_hook
     def _on_update_status(self, _: UpdateStatusEvent) -> None:
         self._process_status_and_configurations()
         self._set_workload_version()
@@ -1165,7 +1130,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
             )
         )
 
-    @profiling_hook
     def _on_change(self, _: EventBase) -> None:
         """General event handler for any change to config."""
         self._configure()
@@ -1353,7 +1317,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
             return False
         return True
 
-    @profiling_hook
     def _handle_ingress_data_provided(self, event: RelationEvent) -> None:
         """Handle data provided by an unit requesting ingress."""
         if not self.ready:
@@ -1365,7 +1328,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
         if isinstance(self.unit.status, MaintenanceStatus):
             self.unit.status = ActiveStatus(self.serving_message())
 
-    @profiling_hook
     def _handle_ingress_data_removed(self, event: RelationEvent) -> None:
         """Handle data removal for ingress."""
         self._wipe_ingress_data_for_relation(
@@ -1381,7 +1343,6 @@ class TraefikIngressCharm(CharmBase):  # pylint: disable=too-many-instance-attri
         """Handle change in the upstream ingress relation."""
         self._process_status_and_configurations()
 
-    @profiling_hook
     def _handle_traefik_route_ready(self, event: TraefikRouteRequirerReadyEvent) -> None:
         """Handle ingress data published by a traefik-route charm."""
         if not self.container.can_connect():
